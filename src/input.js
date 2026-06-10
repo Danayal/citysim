@@ -3,13 +3,15 @@ import { CELL, WORLD, CATALOG, worldToCell, inBounds, cellToWorld } from './cons
 
 // Orbit camera tuned for one-thumb play:
 //  - pan tool: 1-finger drag pans, tap inspects
-//  - build tool: 1-finger tap/drag builds, 2-finger gesture moves camera
+//  - drag tool (road/zone/metro/bulldoze): 1-finger drag previews a straight
+//    line or rectangle, committed on release; 2 fingers move the camera
+//  - other build tools: tap places, 1-finger drag pans
 //  - pinch = zoom, twist = rotate (always)
 export class Input {
   constructor(canvas, camera, callbacks) {
     this.canvas = canvas;
     this.camera = camera;
-    this.cb = callbacks; // {onTap, onPaint, onPaintEnd, onHover, getTool}
+    this.cb = callbacks; // {onTap, onDragUpdate, onDragEnd, onDragCancel, onHover, getTool}
 
     this.target = new THREE.Vector3(10, 0, 0);
     this.yaw = -Math.PI / 4;
@@ -19,8 +21,8 @@ export class Input {
     this.pointers = new Map();
     this.tapInfo = null;
     this.pinch = null;
-    this.painting = false;
-    this.lastPaintCell = -1;
+    this.dragStart = null;   // [x,z] anchor cell of a build gesture
+    this.dragCur = null;
 
     this.ray = new THREE.Raycaster();
     this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -68,13 +70,13 @@ export class Input {
     if (this.pointers.size === 1) {
       this.tapInfo = { x: e.clientX, y: e.clientY, t: performance.now() };
       if (this.isBuildTool() && e.button === 0 && CATALOG[this.cb.getTool()]?.drag) {
-        this.painting = true;
-        this.lastPaintCell = -1;
-        this.paintAt(e);
+        this.dragStart = this.cellAt(e);
+        this.dragCur = this.dragStart;
+        if (this.dragStart) this.cb.onDragUpdate(this.dragStart, this.dragCur);
       }
     } else {
-      // second finger: abort painting, switch to camera gesture
-      this.painting = false;
+      // second finger: cancel any build gesture, switch to camera
+      if (this.dragStart) { this.dragStart = this.dragCur = null; this.cb.onDragCancel?.(); }
       this.tapInfo = null;
       if (this.pointers.size === 2) this.startPinch();
     }
@@ -112,7 +114,14 @@ export class Input {
     if (this.pointers.size === 1) {
       if (this.tapInfo && Math.hypot(e.clientX - this.tapInfo.x, e.clientY - this.tapInfo.y) > 12)
         this.tapInfo = null;
-      if (this.painting) { this.paintAt(e); return; }
+      if (this.dragStart) {
+        const cell = this.cellAt(e);
+        if (cell && (!this.dragCur || cell[0] !== this.dragCur[0] || cell[1] !== this.dragCur[1])) {
+          this.dragCur = cell;
+          this.cb.onDragUpdate(this.dragStart, this.dragCur);
+        }
+        return;
+      }
       if (p.button === 2 || e.ctrlKey) { // desktop rotate
         this.yaw -= dx * 0.006;
         this.pitch = clamp(this.pitch + dy * 0.005, 0.3, 1.45);
@@ -136,10 +145,11 @@ export class Input {
   up(e) {
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.pinch = null;
-    if (this.painting && this.pointers.size === 0) {
-      this.painting = false;
-      this.tapInfo = null; // the drag already placed; don't double-fire a tap
-      this.cb.onPaintEnd?.();
+    if (this.dragStart && this.pointers.size === 0) {
+      this.cb.onDragEnd(this.dragStart, this.dragCur || this.dragStart);
+      this.dragStart = this.dragCur = null;
+      this.tapInfo = null; // gesture committed; don't also fire a tap
+      return;
     }
     if (this.tapInfo && performance.now() - this.tapInfo.t < 400 && this.pointers.size === 0) {
       const cell = this.cellAt(e);
@@ -154,15 +164,6 @@ export class Input {
       const cell = this.cellAt(e);
       this.cb.onHover?.(cell);
     }
-  }
-
-  paintAt(e) {
-    const cell = this.cellAt(e);
-    if (!cell) return;
-    const key = cell[1] * 1000 + cell[0];
-    if (key === this.lastPaintCell) return;
-    this.lastPaintCell = key;
-    this.cb.onPaint(cell);
   }
 
   flyTo(x, z) {

@@ -115,6 +115,32 @@ export const CATALOG = {
                 radius: 14, svc: 'joy', tourism: 350, unlock: 6000,
                 desc: 'The tallest thing on Earth. Fireworks included.' },
 
+  // The Future (high-population tech tree)
+  vertfarm:  { name: 'Vertical Farm', icon: '🥬', cat: 'future', cost: 8000, maint: 60, w: 2, d: 2,
+               water: 80, radius: 7, svc: 'joy', unlock: 1500,
+               desc: 'Lettuce towers in the desert. Recycles its own water.' },
+  droneport: { name: 'Drone Port', icon: '🛸', cat: 'future', cost: 9000, maint: 70, w: 2, d: 2,
+               jobs: 20, trafficCut: 0.08, unlock: 2000,
+               desc: 'Parcels by air — delivery vans stay home.' },
+  hyperloop: { name: 'Hyperloop Hub', icon: '🚄', cat: 'future', cost: 16000, maint: 110, w: 2, d: 2,
+               jobs: 30, tourism: 60, trafficCut: 0.12, unlock: 2500,
+               desc: 'Abu Dhabi in 9 minutes. Commuters vanish from your roads.' },
+  skyport:   { name: 'Sky-Taxi Pad', icon: '🚁', cat: 'future', cost: 7000, maint: 45, w: 1, d: 1,
+               trafficCut: 0.04, radius: 6, svc: 'joy', unlock: 3000,
+               desc: 'Build 2+ pads and flying taxis start hopping between them.' },
+  robopolice:{ name: 'Robo-Police HQ', icon: '🤖', cat: 'future', cost: 9000, maint: 80, w: 2, d: 2,
+               radius: 18, svc: 'safety', unlock: 3500,
+               desc: 'Patrols the whole district. Never sleeps, never snacks.' },
+  fusion:    { name: 'Fusion Reactor', icon: '⚛️', cat: 'future', cost: 30000, maint: 180, w: 2, d: 2,
+               power: 800, unlock: 4500,
+               desc: 'A bottled star. Powers everything you will ever build.' },
+  arcology:  { name: 'Arcology Dome', icon: '🌐', cat: 'future', cost: 45000, maint: 220, w: 3, d: 3,
+               pop: 400, use: { power: 40, water: 30 }, radius: 8, svc: 'joy', unlock: 6000,
+               desc: 'A whole neighbourhood under one climate-controlled dome.' },
+  spaceelevator: { name: 'Space Elevator', icon: '🛰️', cat: 'future', cost: 150000, maint: 500, w: 2, d: 2,
+               tourism: 500, radius: 16, svc: 'joy', unlock: 10000,
+               desc: 'The ultimate flex: a ribbon to orbit. Watch the launches.' },
+
   // Tools
   bulldoze: { name: 'Bulldoze', icon: '🦴', cat: 'tools', cost: 0, drag: true,
               desc: 'Demolish. Refunds 25% of the build cost.' },
@@ -130,6 +156,7 @@ export const CATEGORIES = [
   { id: 'utilities', name: 'Power', icon: '⚡' },
   { id: 'services',  name: 'Serve', icon: '🏥' },
   { id: 'landmarks', name: 'Wonders', icon: '🗼' },
+  { id: 'future',    name: 'Future', icon: '🚀' },
   { id: 'tools',     name: 'Tools', icon: '🔍' },
 ];
 
@@ -139,6 +166,7 @@ export const MILESTONES = [
   { pop: 1200, title: 'Gulf City',       reward: 8000,  blurb: 'Cranes on every horizon. The Burj Al Arab awaits.' },
   { pop: 3000, title: 'Emirate Capital', reward: 15000, blurb: 'Tourists arrive by the planeload.' },
   { pop: 6000, title: 'World Metropolis',reward: 30000, blurb: 'Time to build the tallest tower on Earth.' },
+  { pop: 10000, title: 'City of the Future', reward: 80000, blurb: 'Flying taxis hum overhead. Next stop: orbit.' },
 ];
 
 export const SERVICES = ['edu', 'health', 'safety', 'fire', 'joy'];

@@ -56,6 +56,29 @@ export class Effects {
     scene.add(this.fw);
     this.fwVel = new Float32Array(fn * 3);
     this.fwLife = 0;
+
+    // rocket (launches from the Space Elevator)
+    const rocket = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 4, 8),
+      new THREE.MeshBasicMaterial({ color: 0xf2f6f8 }));
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.4, 8),
+      new THREE.MeshBasicMaterial({ color: 0xc0392b }));
+    nose.position.y = 2.7;
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.45, 3.2, 8),
+      new THREE.MeshBasicMaterial({ color: 0xffb340, transparent: true, opacity: 0.9 }));
+    flame.rotation.x = Math.PI;
+    flame.position.y = -3.4;
+    rocket.add(body, nose, flame);
+    rocket.visible = false;
+    scene.add(rocket);
+    this.rocket = rocket;
+    this.rocketT = -1;
+  }
+
+  launchRocket(wx, wz) {
+    this.rocket.position.set(wx, 2, wz);
+    this.rocket.visible = true;
+    this.rocketT = 0;
   }
 
   launchFireworks(cx = 0, cz = 0) {
@@ -136,6 +159,15 @@ export class Effects {
       }
       this.fw.geometry.attributes.position.needsUpdate = true;
     } else this.fw.material.opacity = 0;
+
+    // rocket ascent
+    if (this.rocketT >= 0) {
+      this.rocketT += dt;
+      const t = this.rocketT;
+      this.rocket.position.y = 2 + t * t * 14;
+      this.rocket.rotation.y += dt * 0.6;
+      if (t > 7) { this.rocketT = -1; this.rocket.visible = false; }
+    }
 
     return this.night;
   }

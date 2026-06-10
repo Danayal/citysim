@@ -38,13 +38,25 @@ export class Traffic {
     this.train.count = 0;
     scene.add(this.train);
     this.dummy = new THREE.Object3D();
+
+    // flying sky-taxis (appear once 2+ skyports exist)
+    const xg = new GeoBuilder();
+    xg.box(1.3, 0.5, 0.8, 0, 0, 0, 0xe8eef2);
+    xg.box(0.7, 0.4, 0.7, 0, 0.45, 0, 0x57c8e8);
+    xg.box(2.4, 0.06, 0.18, 0, 0.95, 0, 0x2a313b);   // rotor bar
+    xg.box(0.18, 0.06, 2.4, 0, 0.95, 0, 0x2a313b);
+    this.taxis = new THREE.InstancedMesh(xg.build(), new THREE.MeshLambertMaterial({ vertexColors: true }), 6);
+    this.taxis.count = 0;
+    scene.add(this.taxis);
+    this.skyports = [];
+    this.taxiState = [...Array(6)].map((_, i) => ({ a: 0, b: 0, t: 1 + i * 0.17 }));
   }
 
   invalidate() { this.endpointsDirty = true; this.trainDirty = true; }
 
   targetCars(state) {
-    const ridershipCut = Math.min(0.5, this.metroStations * 0.04);
-    return Math.min(MAX_CARS, Math.floor((state.stats.pop / 11 + state.stats.tourists / 7) * (1 - ridershipCut)) + (highwayConnected(state) ? 4 : 0));
+    const cut = Math.min(0.65, this.metroStations * 0.04 + (state.stats.trafficCut || 0));
+    return Math.min(MAX_CARS, Math.floor((state.stats.pop / 11 + state.stats.tourists / 7) * (1 - cut)) + (highwayConnected(state) ? 4 : 0));
   }
 
   refresh(state) {
@@ -55,6 +67,9 @@ export class Traffic {
     const { stationsByComp } = metroComponents(state);
     this.metroStations = stationsByComp.reduce((a, s) => a + (s.length >= 2 ? s.length : 0), 0);
     this.rebuildTrainPath(state, stationsByComp);
+    this.skyports = state.buildings
+      .filter(b => b && b.key === 'skyport')
+      .map(b => cellToWorld(b.x, b.z));
   }
 
   rebuildTrainPath(state, stationsByComp) {
@@ -147,6 +162,34 @@ export class Traffic {
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
 
     this.updateTrain(dt);
+    this.updateTaxis(dt);
+  }
+
+  updateTaxis(dt) {
+    const ports = this.skyports;
+    if (ports.length < 2) { this.taxis.count = 0; return; }
+    const n = Math.min(6, ports.length * 2);
+    this.taxis.count = n;
+    const d = this.dummy;
+    for (let i = 0; i < n; i++) {
+      const s = this.taxiState[i];
+      if (s.t >= 1) {
+        s.a = (Math.random() * ports.length) | 0;
+        do { s.b = (Math.random() * ports.length) | 0; } while (s.b === s.a);
+        s.t = 0;
+      }
+      const [ax, az] = ports[s.a], [bx, bz] = ports[s.b];
+      const len = Math.hypot(bx - ax, bz - az);
+      s.t = Math.min(1, s.t + dt * 14 / Math.max(20, len));
+      const e = s.t * s.t * (3 - 2 * s.t); // smoothstep cruise
+      const x = ax + (bx - ax) * e, z = az + (bz - az) * e;
+      const y = 7.2 + Math.sin(s.t * Math.PI) * 9; // climb then descend
+      d.position.set(x, y, z);
+      d.rotation.set(0, Math.atan2(bx - ax, bz - az) + Math.PI / 2, Math.sin(s.t * Math.PI) * 0.08);
+      d.updateMatrix();
+      this.taxis.setMatrixAt(i, d.matrix);
+    }
+    this.taxis.instanceMatrix.needsUpdate = true;
   }
 
   updateTrain(dt) {

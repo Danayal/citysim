@@ -45,12 +45,14 @@ export class UI {
         <button id="speed0" class="spd">⏸</button>
         <button id="speed1" class="spd on">▶</button>
         <button id="speed2" class="spd">⏩</button>
+        <button id="btn-undo">↩️</button>
         <button id="btn-goals">🎯</button>
         <button id="btn-menu">☰</button>
       </div>`;
     [0, 1, 2].forEach(i => $('#speed' + i).addEventListener('click', () => {
       this.sounds.tap(); this.cb.onSpeed(i); this.refreshSpeed(i);
     }));
+    $('#btn-undo').addEventListener('click', () => this.cb.onUndo());
     $('#btn-goals').addEventListener('click', () => { this.sounds.tap(); this.togglePanel('goals'); });
     $('#btn-menu').addEventListener('click', () => { this.sounds.tap(); this.togglePanel('menu'); });
   }
@@ -112,12 +114,18 @@ export class UI {
     document.querySelector('.cat[data-id="pan"]')?.classList.toggle('on', key === 'pan');
     if (key === 'pan') $('#items').classList.add('hidden');
     this.cb.onTool(key);
-    $('#hint').textContent = key === 'pan'
+    this.defaultHint = key === 'pan'
       ? 'Drag to look around · pinch to zoom · twist to rotate'
-      : CATALOG[key]?.drag
-        ? 'Drag with one finger to build · two fingers to move camera'
-        : 'Tap to place · two fingers to move camera';
+      : key === 'road' || CATALOG[key]?.metro
+        ? 'Drag to draw a straight route — builds when you let go · two fingers to move camera'
+        : CATALOG[key]?.drag
+          ? 'Drag a rectangle — applies when you let go · two fingers to move camera'
+          : 'Tap to place · one finger drag pans · ↩️ undoes';
+    this.resetHint();
   }
+
+  setHint(text) { $('#hint').textContent = text; }
+  resetHint() { $('#hint').textContent = this.defaultHint || ''; }
 
   // ---- panels --------------------------------------------------------------
   buildPanels() {

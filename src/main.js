@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CELL, WORLD, CATALOG, cellToWorld } from './constants.js';
 import { newState, loadGame, saveGame, wipeSave } from './state.js';
+import { GeoBuilder, swapGeometry } from './geom.js';
 import { Terrain } from './terrain.js';
 import { CityMeshes } from './buildings.js';
 import { Roads } from './roads.js';
@@ -46,13 +47,48 @@ const ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), ghostMat);
 ghost.visible = false;
 scene.add(ghost);
 
+// drag-gesture preview (straight roads, zone rectangles)
+const preview = new THREE.Mesh(new THREE.BufferGeometry(),
+  new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.5, depthWrite: false }));
+scene.add(preview);
+
 let heatmapOn = false;
 let heatTimer = 0;
 
+// ---- undo ----------------------------------------------------------------
+const undoStack = [];
+function pushUndo() {
+  if (undoStack.length >= 12) undoStack.shift();
+  undoStack.push({
+    kind: state.grid.kind.slice(), zone: state.grid.zone.slice(),
+    metro: state.grid.metro.slice(), terrain: state.grid.terrain.slice(),
+    bIndex: state.grid.bIndex.slice(),
+    buildings: JSON.parse(JSON.stringify(state.buildings)),
+    money: state.money, palmBuilt: state.palmBuilt,
+  });
+}
+function undo() {
+  const s = undoStack.pop();
+  if (!s) { ui.toast('Nothing to undo', 1200); return; }
+  state.grid.kind.set(s.kind); state.grid.zone.set(s.zone);
+  state.grid.metro.set(s.metro); state.grid.terrain.set(s.terrain);
+  state.grid.bIndex.set(s.bIndex);
+  state.buildings = s.buildings;
+  state.money = s.money;
+  state.palmBuilt = s.palmBuilt;
+  sim.coverageDirty = true;
+  Object.assign(sim.dirty, { terrain: true, city: true, roads: true, metro: true, zones: true, palms: true });
+  traffic.invalidate();
+  sounds.tap();
+  ui.toast('↩️ Undone', 1000);
+}
+
+let uiRef = null;
 const ui = new UI(state, sounds, {
-  onTool(key) { ghost.visible = false; },
+  onTool(key) { ghost.visible = false; clearPreview(); },
   onSpeed(i) { state.speed = i; },
   onSave() { saveGame(state); },
+  onUndo() { undo(); },
   onNewCity() {
     wipeSave();
     state = newState();
@@ -72,6 +108,7 @@ const ui = new UI(state, sounds, {
   },
 });
 
+uiRef = ui;
 ui.refreshSpeed(state.speed);
 
 const input = new Input(canvas, camera, {
@@ -86,18 +123,83 @@ const input = new Input(canvas, camera, {
       return;
     }
     if (tool === 'heatmap') return;
-    if (tool === 'bulldoze') { if (sim.bulldoze(cell[0], cell[1])) sounds.build(); return; }
     placeWithFootprint(tool, cell[0], cell[1]);
   },
-  onPaint(cell) {
+  onDragUpdate(a, b) { showPreview(ui.tool, a, b); },
+  onDragCancel() { clearPreview(); },
+  onDragEnd(a, b) {
     sounds.ensure();
     const tool = ui.tool;
-    if (tool === 'bulldoze') { sim.bulldoze(cell[0], cell[1]); return; }
-    if (CATALOG[tool]?.drag) sim.place(tool, cell[0], cell[1]);
+    const cells = gestureCells(tool, a, b);
+    clearPreview();
+    pushUndo();
+    let placed = 0;
+    for (const [x, z] of cells) {
+      if (tool === 'bulldoze') { if (sim.bulldoze(x, z)) placed++; continue; }
+      const def = CATALOG[tool];
+      if (def && state.money < def.cost) { ui.toast('🚫 Out of dirhams', 1500); break; }
+      if (!sim.canPlace(tool, x, z).ok) continue; // skip blocked cells quietly (e.g. crossing a road)
+      if (sim.place(tool, x, z)) placed++;
+    }
+    if (placed) sounds.build(); else undoStack.pop(); // nothing happened; don't waste an undo slot
+    traffic.invalidate();
   },
-  onPaintEnd() { traffic.invalidate(); },
   onHover(cell) { updateGhost(cell); },
 });
+
+// Cells covered by a drag gesture: an L-shaped run for roads/metro
+// (dominant axis first — always straight), a rectangle for zones/bulldoze.
+function gestureCells(tool, a, b) {
+  const def = CATALOG[tool];
+  const cells = [];
+  if (tool === 'road' || def?.metro) {
+    let [x, z] = a;
+    const [tx, tz] = b;
+    const dx = Math.sign(tx - x), dz = Math.sign(tz - z);
+    if (Math.abs(tx - a[0]) >= Math.abs(tz - a[1])) {
+      for (; x !== tx; x += dx) cells.push([x, z]);
+      for (; ; z += dz) { cells.push([x, z]); if (z === tz) break; }
+    } else {
+      for (; z !== tz; z += dz) cells.push([x, z]);
+      for (; ; x += dx) { cells.push([x, z]); if (x === tx) break; }
+    }
+  } else {
+    const x0 = Math.min(a[0], b[0]), z0 = Math.min(a[1], b[1]);
+    const x1 = Math.min(Math.max(a[0], b[0]), x0 + 13);
+    const z1 = Math.min(Math.max(a[1], b[1]), z0 + 13);
+    for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) cells.push([x, z]);
+  }
+  return cells;
+}
+
+function showPreview(tool, a, b) {
+  const def = CATALOG[tool];
+  if (!def) return;
+  const cells = gestureCells(tool, a, b);
+  const g = new GeoBuilder();
+  let cost = 0, n = 0;
+  for (const [x, z] of cells) {
+    const [wx, wz] = cellToWorld(x, z);
+    let ok, color;
+    if (tool === 'bulldoze') { ok = true; color = 0xffaa44; }
+    else {
+      ok = sim.canPlace(tool, x, z).ok;
+      color = ok ? 0x55ff99 : 0xff5555;
+      if (ok) { cost += def.cost; n++; }
+    }
+    g.box(CELL * 0.92, 0.3, CELL * 0.92, wx, 0.18, wz, color);
+  }
+  swapGeometry(preview, g.build());
+  preview.visible = true;
+  ui.setHint(tool === 'bulldoze'
+    ? `${cells.length} tiles — release to demolish`
+    : `${n} × ${def.name} — AED ${Math.round(cost).toLocaleString('en-US')} on release`);
+}
+
+function clearPreview() {
+  preview.visible = false;
+  uiRef?.resetHint(); // late-bound: clearPreview runs once during UI construction
+}
 
 // center camera on the highway ramp side of the coast
 input.target.set(WORLD * 0.1, 0, 0);
@@ -109,10 +211,12 @@ function placeWithFootprint(key, x, z) {
   // center footprint on tap
   const ox = x - Math.floor((def.w || 1) / 2), oz = z - Math.floor((def.d || 1) / 2);
   const tx = def.special === 'palm' ? x : ox, tz = def.special === 'palm' ? z : oz;
+  pushUndo();
   if (sim.place(key, tx, tz)) {
     traffic.invalidate();
     updateGhost(null);
   } else {
+    undoStack.pop();
     const chk = sim.canPlace(key, tx, tz);
     if (!chk.ok && chk.reason) ui.toast('🚫 ' + chk.reason, 1800);
   }
@@ -152,7 +256,7 @@ function processDirty() {
 const HOURS_PER_SEC = [0, 0.55, 1.8]; // by speed setting
 let hourAcc = 0;
 let last = performance.now();
-let hudTimer = 0, saveTimer = 0;
+let hudTimer = 0, saveTimer = 0, rocketTimer = 60; // first launch shortly after build
 let fpsAvg = 60, perfMode = false;
 
 function frame(now) {
@@ -183,6 +287,17 @@ function frame(now) {
 
   if ((hudTimer += dt) > 0.25) { hudTimer = 0; ui.updateHUD(); }
   if ((saveTimer += dt) > 30) { saveTimer = 0; saveGame(state); }
+
+  // rockets from the Space Elevator
+  if ((rocketTimer += dt) > 75) {
+    rocketTimer = 0;
+    const se = state.buildings.find(b => b && b.key === 'spaceelevator');
+    if (se) {
+      const [wx, wz] = cellToWorld(se.x, se.z);
+      effects.launchRocket(wx + CELL * 1.2, wz + CELL * 0.5);
+      sounds.whoosh();
+    }
+  }
 
   // auto performance mode for older iPhones
   fpsAvg = fpsAvg * 0.97 + (1 / Math.max(dt, 0.001)) * 0.03;

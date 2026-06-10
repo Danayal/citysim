@@ -133,5 +133,25 @@ check('buildings survive', loaded.buildings.length === state.buildings.filter(Bo
 // 11. milestone fired
 check('milestone reached', state.milestone >= 1);
 
+// 12. future tech
+state._popEver = 99999; // unlock everything
+state.money = 1e9;
+sim.place('fusion', 36, 12);
+sim.place('arcology', 36, 30);
+sim.place('hyperloop', 40, 30);
+sim.place('skyport', 40, 12);
+sim.place('skyport', 40, 36);
+const popBefore = state.stats.pop;
+sim.tickHour(0.1, 0);
+check('fusion adds big power', state.stats.power.cap >= 800);
+check('arcology houses 400', state.stats.pop >= popBefore + 400);
+check('tech cuts traffic', state.stats.trafficCut >= 0.15);
+sim.tickHour(0.1, 0);
+check('future buildings persist in save', (() => {
+  saveGame(state);
+  const l2 = loadGame();
+  return l2.buildings.some(b => b.key === 'arcology') && l2.buildings.some(b => b.key === 'fusion');
+})());
+
 console.log(failures ? `\n${failures} FAILURES` : '\nALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

@@ -122,8 +122,8 @@ export class Sim {
     this.dirty.city = this.dirty.palms = this.dirty.zones = true;
     this.coverageDirty = true;
     this.emit({ type: 'build', key });
-    if (def.cat === 'landmarks') this.emit({ type: 'wonder', key, x, z });
-    if (key === 'burj') this.emit({ type: 'fireworks', x, z });
+    if (def.cat === 'landmarks' || def.cat === 'future') this.emit({ type: 'wonder', key, x, z });
+    if (key === 'burj' || key === 'spaceelevator') this.emit({ type: 'fireworks', x, z });
     return true;
   }
 
@@ -278,32 +278,57 @@ export class Sim {
 
     // capacities
     let powerCap = 0, waterCap = 0, powerUse = 0, waterUse = 0;
-    let pop = 0, jobs = 0, jobsC = 0, jobsI = 0, tourism = 0, soukIncome = 0;
+    let pop = 0, jobs = 0, jobsC = 0, jobsI = 0, tourism = 0, soukIncome = 0, trafficCut = 0;
     for (const b of st.buildings) {
       if (!b) continue;
       const def = CATALOG[b.key];
       if (def) {
         powerCap += def.power || 0; waterCap += def.water || 0;
         tourism += def.tourism || 0; soukIncome += def.income || 0;
+        trafficCut += def.trafficCut || 0;
         if (def.jobs) jobsC += def.jobs;
       }
       if (b.zone) {
         const zs = ZONE_STATS[b.zone][b.level - 1];
         powerUse += zs.power; waterUse += zs.water;
+      } else if (def?.use) {
+        powerUse += def.use.power || 0; waterUse += def.use.water || 0;
       } else if (def && !def.power && !def.water) {
         powerUse += 2; waterUse += 1; // services sip utilities
       }
     }
     if (st.event?.type === 'heatwave') powerUse = Math.ceil(powerUse * 1.35);
-    const powerOK = powerUse <= powerCap, waterOK = waterUse <= waterCap;
+    // Brownout model: a shortage darkens a stable *fraction* of buildings
+    // (never the whole city) so shortages are visible, painful, and — unlike
+    // an all-or-nothing cutoff — always recoverable by adding capacity.
+    const powerFrac = powerUse > 0 ? Math.min(1, powerCap / powerUse) : 1;
+    const waterFrac = waterUse > 0 ? Math.min(1, waterCap / waterUse) : 1;
+    const frac = powerFrac * waterFrac;
+    const powerOK = powerFrac >= 1, waterOK = waterFrac >= 1;
+    if (frac < 1 && !this._shortageWarned) {
+      this._shortageWarned = true;
+      this.emit({
+        type: 'toast',
+        text: powerFrac < waterFrac
+          ? '⚡ Power shortage — districts are going dark! Build more capacity.'
+          : '💧 Water shortage — the taps are sputtering! Build desalination.',
+      });
+    }
+    if (frac >= 1) this._shortageWarned = false;
 
     // building activity, pop & jobs
+    let ci = 0; // stable per-building brownout lottery
+    const lit = () => frac >= 1 || ((ci++ * 0.618034) % 1) < frac;
     for (const b of st.buildings) {
-      if (!b || !b.zone) continue;
-      b.active = powerOK && waterOK ? true : Math.random() > 0.5 ? b.active : false;
-      if (!powerOK || !waterOK) this.dirty.city = true;
+      if (!b) continue;
+      const bdef = CATALOG[b.key];
+      if (bdef?.pop && lit()) pop += bdef.pop; // arcologies house people
+      if (!b.zone) continue;
+      const on = lit();
+      if (on !== (b.active !== false)) this.dirty.city = true;
+      b.active = on;
       const zs = ZONE_STATS[b.zone][b.level - 1];
-      if (b.active !== false) {
+      if (on) {
         if (b.zone === Z.R) pop += zs.pop;
         else if (b.zone === Z.C) jobsC += zs.jobs;
         else jobsI += zs.jobs;
@@ -334,6 +359,7 @@ export class Sim {
     Object.assign(st.stats, {
       pop, jobs, happiness: Math.round(happiness), tourists,
       traffic: congestion, ridership: metroStations * 9,
+      trafficCut: Math.min(0.35, trafficCut),
       power: { cap: powerCap, use: powerUse }, water: { cap: waterCap, use: waterUse },
       demand,
     });

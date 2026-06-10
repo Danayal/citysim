@@ -1,4 +1,4 @@
-const CACHE = 'mirage-dubai-v1';
+const CACHE = 'mirage-dubai-v2';
 const SHELL = [
   './', './index.html', './style.css', './manifest.webmanifest',
   './vendor/three.module.js',

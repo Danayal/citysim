@@ -227,6 +227,77 @@ const DRAW = {
     s.cyl(1.6, 1.6, 0.4, -2.8, 3.2, 2.6, 0x57c8e8, 14); // aquarium dome hint
     windows(g, 10.5, 3.2, 9.5, 2, 7, 0.9, 0xaffaff);
   },
+  // --- the future ---
+  vertfarm(s, g) {
+    s.box(5.0, 9, 4.2, 0, 0, 0, GLASS);
+    for (let f = 0; f < 6; f++) s.box(5.4, 0.35, 4.6, 0, 1.1 + f * 1.4, 0, GREEN);
+    s.box(5.4, 0.4, 4.6, 0, 9, 0, WHITE);
+    for (let f = 0; f < 6; f++) g.box(5.45, 0.18, 4.65, 0, 0.75 + f * 1.4, 0, 0xc8ffd0);
+  },
+  droneport(s, g) {
+    s.box(6.5, 0.8, 6.0, 0, 0, 0, 0x3c4450);
+    s.cyl(1.6, 1.6, 0.15, -1.4, 0.8, -1.2, 0x2a313b, 14);
+    s.cyl(1.6, 1.6, 0.15, 1.6, 0.8, 1.4, 0x2a313b, 14);
+    s.cyl(0.5, 0.7, 4.2, 2.4, 0.8, -2.0, WHITE, 8);          // control tower
+    s.dome(0.8, 2.4, 5.0, -2.0, GLASS, 10);
+    for (const [dx, dz] of [[-1.4, -1.2], [1.6, 1.4]]) {     // parked drones
+      s.box(0.9, 0.18, 0.9, dx, 1.0, dz, 0xe8eef2);
+      s.sphere(0.28, dx, 1.25, dz, 0x57c8e8, 8);
+    }
+    g.torus(1.6, 0.07, -1.4, 0.92, -1.2, 0x6ef2ff, { x: Math.PI / 2 }, 18);
+    g.torus(1.6, 0.07, 1.6, 0.92, 1.4, 0x6ef2ff, { x: Math.PI / 2 }, 18);
+  },
+  hyperloop(s, g) {
+    s.box(5.5, 3.0, 4.5, 0, 0, 0, WHITE);
+    s.cyl(1.5, 1.5, 7.6, 0, 2.6, 0, 0xc8d2da, 14, { z: Math.PI / 2 }); // the tube
+    s.cyl(1.7, 1.7, 0.6, -3.4, 1.9, 0, STEEL, 14, { z: Math.PI / 2 });
+    s.cyl(1.7, 1.7, 0.6, 3.4, 1.9, 0, STEEL, 14, { z: Math.PI / 2 });
+    g.box(7.4, 0.14, 0.4, 0, 4.2, 1.45, 0x6ef2ff);
+    g.box(3.4, 0.8, 0.06, 0, 0.9, 2.27, 0xaffaff);
+  },
+  skyport(s, g) {
+    s.cyl(0.5, 0.6, 6.5, 0, 0, 0, STEEL, 8);
+    s.cyl(2.0, 1.85, 0.4, 0, 6.5, 0, 0x2a313b, 16);
+    s.box(1.3, 0.12, 0.28, 0, 6.92, 0, 0xffd75e);            // H marking
+    s.box(0.28, 0.12, 1.1, -0.5, 6.92, 0, 0xffd75e);
+    s.box(0.28, 0.12, 1.1, 0.5, 6.92, 0, 0xffd75e);
+    g.torus(1.9, 0.09, 0, 6.95, 0, 0x6ef2ff, { x: Math.PI / 2 }, 20);
+  },
+  robopolice(s, g) {
+    s.box(4.2, 8.5, 3.6, 0, 0, 0, 0x232a33, { y: Math.PI / 8 });
+    s.box(4.4, 0.5, 3.8, 0, 8.5, 0, 0x1f4e79, { y: Math.PI / 8 });
+    s.sphere(0.9, 0, 9.4, 0, GLASS, 10);                     // sensor orb
+    for (let f = 0; f < 5; f++) g.box(4.3, 0.16, 3.7, 0, 1.4 + f * 1.5, 0, 0x66aaff, { y: Math.PI / 8 });
+  },
+  fusion(s, g) {
+    s.box(6.8, 1.2, 6.4, 0, 0, 0, 0xd8d2c4);
+    s.cyl(2.4, 2.0, 4.2, 0, 1.2, 0, WHITE, 16);
+    s.dome(2.0, 0, 5.4, 0, STEEL, 16);
+    s.cyl(0.5, 0.4, 3.2, 2.7, 1.2, 2.4, 0xc8d2da, 8);
+    s.cyl(0.5, 0.4, 3.2, -2.7, 1.2, 2.4, 0xc8d2da, 8);
+    g.torus(2.55, 0.22, 0, 3.2, 0, 0x4dfff0, { x: Math.PI / 2 }, 24); // plasma ring
+    g.box(0.5, 0.5, 0.5, 0, 5.8, 0, 0x4dfff0);
+  },
+  arcology(s, g) {
+    s.cyl(5.4, 5.0, 1.2, 0, 0, 0, CREAM, 18);
+    s.dome(5.0, 0, 1.2, 0, GLASS, 18);                       // the dome
+    for (let f = 0; f < 3; f++) s.cyl(3.6 - f * 1.1, 3.2 - f * 1.1, 1.3, 0, 1.2 + f * 1.4, 0, WHITE, 14); // terraces
+    s.cyl(0.5, 0.3, 6.8, 0, 1.2, 0, STEEL, 8);               // core spire
+    s.box(2.2, 1.4, 0.6, 0, 0, 5.0, WHITE);                  // entrance
+    for (let f = 0; f < 3; f++) g.torus(3.5 - f * 1.1, 0.08, 0, 2.4 + f * 1.4, 0, WARM, { x: Math.PI / 2 }, 18);
+    g.torus(4.6, 0.1, 0, 2.4, 0, 0x9fe8ff, { x: Math.PI / 2 }, 24);
+  },
+  spaceelevator(s, g) {
+    s.cyl(3.2, 2.6, 2.0, 0, 0, 0, 0x2a313b, 12);             // anchor base
+    s.cyl(1.4, 0.9, 10, 0, 2.0, 0, STEEL, 10);
+    s.cyl(0.55, 0.4, 30, 0, 12, 0, 0xc8d2da, 8);             // ribbon tower
+    s.cyl(0.22, 0.16, 38, 0, 42, 0, 0x9aa6ae, 6);            // tether
+    s.sphere(1.5, 0, 82, 0, WHITE, 12);                      // counterweight
+    s.torus(1.9, 0.18, 0, 82, 0, GOLD, { x: Math.PI / 2 }, 16);
+    for (let f = 0; f < 7; f++) g.torus(0.9 - f * 0.07, 0.07, 0, 4 + f * 5.5, 0, 0x6ef2ff, { x: Math.PI / 2 }, 12);
+    g.box(0.6, 0.6, 0.6, 0, 82, 0, 0xaffaff);
+  },
+
   burj(s, g) {
     // Three-lobed telescoping spire.
     const tiers = [[2.6, 10], [2.1, 18], [1.6, 26], [1.15, 34], [0.75, 42], [0.42, 50]];
@@ -278,7 +349,7 @@ export class CityMeshes {
     this.glow.visible = false;
     scene.add(this.solid, this.glow);
 
-    this.zoneMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, depthWrite: false });
+    this.zoneMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false });
     this.zoneMesh = new THREE.Mesh(new THREE.BufferGeometry(), this.zoneMat);
     scene.add(this.zoneMesh);
   }
