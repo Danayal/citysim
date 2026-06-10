@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Mirage City: Dubai</title>
+  <meta name="description" content="A 3D Dubai-themed city builder that runs in your pocket.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mirage City">
+  <meta name="theme-color" content="#0c1430">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="topbar"></div>
+  <div id="toast" class="hidden"></div>
+  <div id="panels"></div>
+
+  <div id="bottombar">
+    <div id="hint">Drag to look around · pinch to zoom</div>
+    <div id="items" class="hidden"></div>
+    <div id="cats"></div>
+  </div>
+
+  <div id="modal" class="hidden"></div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
