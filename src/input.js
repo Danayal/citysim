@@ -23,6 +23,9 @@ export class Input {
     this.pinch = null;
     this.dragStart = null;   // [x,z] anchor cell of a build gesture
     this.dragCur = null;
+    this.velX = 0; this.velZ = 0;   // pan inertia
+    this.lastMoveT = 0;
+    this.moved = false;             // true when the user pans (cancels follow-cam)
 
     this.ray = new THREE.Raycaster();
     this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -65,7 +68,8 @@ export class Input {
   }
 
   down(e) {
-    this.canvas.setPointerCapture?.(e.pointerId);
+    try { this.canvas.setPointerCapture?.(e.pointerId); } catch { /* synthetic pointers */ }
+    this.velX = this.velZ = 0; // grab the camera
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, button: e.button });
     if (this.pointers.size === 1) {
       this.tapInfo = { x: e.clientX, y: e.clientY, t: performance.now() };
@@ -135,16 +139,52 @@ export class Input {
   panBy(dx, dy) {
     const k = this.dist * 0.0014;
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
-    this.target.x -= (dx * cos - dy * sin) * k;
-    this.target.z -= (dx * sin + dy * cos) * k;
+    const wx = -(dx * cos - dy * sin) * k;
+    const wz = -(dx * sin + dy * cos) * k;
+    this.target.x += wx;
+    this.target.z += wz;
     const m = WORLD * 0.6;
     this.target.x = clamp(this.target.x, -m, m);
     this.target.z = clamp(this.target.z, -m, m);
+    // velocity estimate for release inertia
+    const now = performance.now();
+    const dt = Math.max(8, now - this.lastMoveT) / 1000;
+    this.lastMoveT = now;
+    this.velX = this.velX * 0.7 + (wx / dt) * 0.3;
+    this.velZ = this.velZ * 0.7 + (wz / dt) * 0.3;
+    if (Math.abs(dx) + Math.abs(dy) > 2) this.moved = true;
+  }
+
+  // Inertial glide after the finger lifts (call every frame).
+  update(dt) {
+    if (this.pointers.size === 0 && (Math.abs(this.velX) > 0.5 || Math.abs(this.velZ) > 0.5)) {
+      this.target.x = clamp(this.target.x + this.velX * dt, -WORLD * 0.6, WORLD * 0.6);
+      this.target.z = clamp(this.target.z + this.velZ * dt, -WORLD * 0.6, WORLD * 0.6);
+      const f = Math.exp(-3.2 * dt);
+      this.velX *= f; this.velZ *= f;
+      this.apply();
+    }
+  }
+
+  // InstancedMesh picking (tap a car / taxi / train).
+  pickInstance(e, mesh) {
+    if (!mesh || !mesh.count) return -1;
+    const r = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - r.left) / r.width) * 2 - 1,
+      -((e.clientY - r.top) / r.height) * 2 + 1
+    );
+    this.ray.setFromCamera(ndc, this.camera);
+    this.ray.params.Mesh = { threshold: 1 };
+    const hits = this.ray.intersectObject(mesh, false);
+    return hits.length ? hits[0].instanceId : -1;
   }
 
   up(e) {
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.pinch = null;
+    // no glide if the finger paused before lifting
+    if (performance.now() - this.lastMoveT > 150) { this.velX = this.velZ = 0; }
     if (this.dragStart && this.pointers.size === 0) {
       this.cb.onDragEnd(this.dragStart, this.dragCur || this.dragStart);
       this.dragStart = this.dragCur = null;

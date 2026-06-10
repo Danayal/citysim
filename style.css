@@ -70,8 +70,8 @@ button:active { background: rgba(255,215,94,.35); }
 }
 #cats::-webkit-scrollbar { display: none; }
 .cat {
-  flex: none; display: flex; flex-direction: column; align-items: center; gap: 1px;
-  font-size: 19px; padding: 5px 12px; border-radius: 12px;
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  font-size: 21px; padding: 7px 14px; border-radius: 12px;
 }
 .cat span { font-size: 10px; font-weight: 700; }
 .cat.on { background: #ffd75e; color: #1c1505; }
@@ -80,8 +80,8 @@ button:active { background: rgba(255,215,94,.35); }
 }
 #items::-webkit-scrollbar { display: none; }
 .item {
-  flex: none; display: flex; flex-direction: column; align-items: center; gap: 1px;
-  min-width: 76px; padding: 7px 8px; border-radius: 13px;
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 84px; padding: 9px 10px; border-radius: 13px;
   background: rgba(255,255,255,.10);
 }
 .item .i { font-size: 24px; }
@@ -121,3 +121,28 @@ button:active { background: rgba(255,215,94,.35); }
 .modal-card h2 { color: #ffd75e; margin-bottom: 10px; font-size: 20px; }
 .modal-card p { font-size: 14px; line-height: 1.55; }
 .modal-card button { margin-top: 16px; padding: 10px 26px; background: #ffd75e; color: #1c1505; font-size: 15px; }
+.modal-card button.ghost { background: rgba(255,255,255,.12); color: #f2ede2; margin-left: 8px; }
+
+/* ---- citizens & contracts ---- */
+.person {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.person > span { flex: 1; min-width: 0; }
+.person i { opacity: .75; font-size: 11px; }
+.person .follow { flex: none; font-size: 11px; padding: 6px 9px; }
+.bar {
+  height: 10px; border-radius: 5px; background: rgba(255,255,255,.14); overflow: hidden; margin: 6px 0;
+}
+.bar i { display: block; height: 100%; background: linear-gradient(90deg, #ffd75e, #57c878); transition: width .4s; }
+#contract { color: #ffd75e; font-weight: 700; cursor: pointer; }
+
+#followbar {
+  position: absolute; top: calc(env(safe-area-inset-top, 0px) + 62px); left: 50%;
+  transform: translateX(-50%); z-index: 25; max-width: 90%;
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(12, 18, 30, .92); border: 1px solid rgba(87, 200, 232, .55);
+  border-radius: 14px; padding: 8px 12px; font-size: 13px; white-space: nowrap;
+  overflow: hidden;
+}
+#followbar #followtext { overflow: hidden; text-overflow: ellipsis; }

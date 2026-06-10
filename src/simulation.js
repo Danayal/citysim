@@ -2,6 +2,17 @@ import {
   N, T, K, Z, M, idx, inBounds, CATALOG, ZONE_STATS, MILESTONES, SERVICES, HW_Z,
 } from './constants.js';
 import { eachCellOf } from './state.js';
+import { buildingName } from './citizens.js';
+
+// Sheikh's contracts: timed challenges that keep the mid-game spicy.
+const CONTRACT_DEFS = {
+  pop:      { icon: '🏠', days: 5, make: (st, m) => ({ target: 80 + m * 120, base: st.stats.pop, text: `House ${80 + m * 120} new residents` }) },
+  jobs:     { icon: '💼', days: 5, make: (st, m) => ({ target: 60 + m * 100, base: st.stats.jobs, text: `Create ${60 + m * 100} new jobs` }) },
+  tourists: { icon: '🧳', days: 6, make: (st, m) => ({ target: 40 + m * 120, base: 0, text: `Host ${40 + m * 120} tourists at once` }) },
+  happy:    { icon: '😊', days: 4, make: (st, m) => ({ target: Math.min(85, 68 + m * 3), base: 0, hold: 12, held: 0, text: `Hold happiness at ${Math.min(85, 68 + m * 3)}%+ for 12 hours` }) },
+  towers:   { icon: '🏗️', days: 6, make: (st, m) => ({ target: 3 + m * 2, base: countL3(st), text: `Grow ${3 + m * 2} buildings to level 3` }) },
+};
+function countL3(st) { return st.buildings.filter(b => b && b.zone && b.level === 3).length; }
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
@@ -142,7 +153,8 @@ export class Sim {
       const def = CATALOG[b.key];
       eachCellOf(b, (cx, cz) => { g.kind[idx(cx, cz)] = K.EMPTY; g.bIndex[idx(cx, cz)] = -1; });
       st.buildings[bi] = null;
-      st.money += (def ? def.cost : 100) * 0.25;
+      st.money += b.rubble ? 0 : (def ? def.cost : 100) * 0.25; // clearing ruins is free
+      if (b.rubble && st.grid.zone[i] === Z.NONE && b.zone) st.grid.zone[i] = b.zone; // re-zone the lot
       this.compactBuildings();
       this.dirty.city = this.dirty.zones = this.dirty.palms = true;
       this.coverageDirty = true;
@@ -271,8 +283,125 @@ export class Sim {
     return Math.max(0, Math.min(100, h));
   }
 
+  // ---- contracts ----------------------------------------------------------
+  contractProgress() {
+    const st = this.state, c = st.contract;
+    if (!c) return 0;
+    switch (c.id) {
+      case 'pop': return (st.stats.pop - c.base) / c.target;
+      case 'jobs': return (st.stats.jobs - c.base) / c.target;
+      case 'tourists': return st.stats.tourists / c.target;
+      case 'happy': return (c.held || 0) / c.hold;
+      case 'towers': return (countL3(st) - c.base) / c.target;
+      default: return 0;
+    }
+  }
+
+  tickContract() {
+    const st = this.state, c = st.contract;
+    if (!c) return;
+    if (c.id === 'happy' && st.stats.happiness >= c.target) c.held = (c.held || 0) + 1;
+    if (this.contractProgress() >= 1) {
+      st.money += c.reward;
+      st.contractsDone = (st.contractsDone || 0) + 1;
+      st.contract = null;
+      this.emit({ type: 'contract-done', text: c.text, reward: c.reward });
+      this.emit({ type: 'fireworks' });
+    } else if (st.day > c.deadline) {
+      st.contract = null;
+      this.emit({ type: 'toast', text: `📜 Contract failed: ${c.text}. The Sheikh is... patient.` });
+    }
+  }
+
+  offerContract() {
+    const st = this.state;
+    if (st.contract || st.contractOffer || st.day < 2 || st.stats.pop < 50) return;
+    if (Math.random() > 0.6) return;
+    const pool = Object.keys(CONTRACT_DEFS).filter(id =>
+      !(id === 'tourists' && st.stats.tourists < 10) && !(id === 'towers' && st.milestone < 1));
+    const id = pool[(Math.random() * pool.length) | 0];
+    const def = CONTRACT_DEFS[id];
+    const m = st.milestone;
+    st.contractOffer = {
+      id, icon: def.icon, days: def.days,
+      reward: Math.round((2500 + m * 3500) * (id === 'happy' || id === 'towers' ? 1.3 : 1)),
+      ...def.make(st, m),
+    };
+    this.emit({ type: 'contract-offer', offer: st.contractOffer });
+  }
+
+  acceptContract() {
+    const st = this.state;
+    if (!st.contractOffer) return;
+    st.contract = { ...st.contractOffer, deadline: st.day + st.contractOffer.days };
+    st.contractOffer = null;
+  }
+  declineContract() { this.state.contractOffer = null; }
+
+  // ---- fire! ----------------------------------------------------------------
+  tickFire() {
+    const st = this.state;
+    st.fireCooldown = Math.max(0, (st.fireCooldown || 0) - 1);
+    const burning = st.buildings.filter(b => b && b.burning);
+    if (!burning.length && !st.fireCooldown && st.stats.pop >= 250) {
+      for (const b of st.buildings) {
+        if (!b || b.station || b.rubble || b.burning) continue;
+        let p = 0.00035 * (b.zone === Z.I ? 3 : b.key === 'gas' ? 4 : 1);
+        if (this.coverage.fire[idx(b.x, b.z)]) p *= 0.2;
+        if (Math.random() < p) { this.ignite(b); break; }
+      }
+    }
+    for (const b of burning) {
+      b.burning--;
+      const covered = this.coverage.fire[idx(b.x, b.z)];
+      if (covered && b.burning <= 2) {
+        b.burning = 0;
+        this.dirty.city = true;
+        this.emit({ type: 'toast', text: `🚒 Firefighters saved ${buildingName(b)}!` });
+      } else if (b.burning <= 0) {
+        this.burnDown(b);
+      } else if (burning.length < 3 && Math.random() < (covered ? 0.05 : 0.25)) {
+        const nb = this.adjacentBuilding(b);
+        if (nb) this.ignite(nb, true);
+      }
+      this.dirty.city = true;
+    }
+  }
+
+  ignite(b, spread = false) {
+    if (b.burning || b.rubble || b.station) return;
+    b.burning = 4;
+    this.dirty.city = true;
+    this.emit({ type: 'fire', x: b.x, z: b.z, name: buildingName(b), spread });
+  }
+
+  burnDown(b) {
+    b.burning = 0;
+    b.rubble = true;
+    b.zone = b.zone || 0;
+    b.level = 1;
+    this.state.fireCooldown = 48; // grace period before the next blaze
+    this.dirty.city = true;
+    this.coverageDirty = true;
+    this.emit({ type: 'toast', text: `🔥 ${'A building'} burned to the ground. Bulldoze the ruins (free).` });
+  }
+
+  adjacentBuilding(b) {
+    const { bIndex } = this.state.grid;
+    for (let dz = -1; dz <= (b.d || 1); dz++) for (let dx = -1; dx <= (b.w || 1); dx++) {
+      const x = b.x + dx, z = b.z + dz;
+      if (!inBounds(x, z)) continue;
+      const bi = bIndex[idx(x, z)];
+      if (bi >= 0) {
+        const nb = this.state.buildings[bi];
+        if (nb && nb !== b && !nb.burning && !nb.rubble) return nb;
+      }
+    }
+    return null;
+  }
+
   // ---- hourly tick ---------------------------------------------------------
-  tickHour(congestion, metroStations) {
+  tickHour(congestion, metroStations, citizenStats) {
     const st = this.state, g = st.grid;
     this.recomputeCoverage();
 
@@ -280,7 +409,7 @@ export class Sim {
     let powerCap = 0, waterCap = 0, powerUse = 0, waterUse = 0;
     let pop = 0, jobs = 0, jobsC = 0, jobsI = 0, tourism = 0, soukIncome = 0, trafficCut = 0;
     for (const b of st.buildings) {
-      if (!b) continue;
+      if (!b || b.rubble || b.burning) continue;
       const def = CATALOG[b.key];
       if (def) {
         powerCap += def.power || 0; waterCap += def.water || 0;
@@ -321,6 +450,11 @@ export class Sim {
     const lit = () => frac >= 1 || ((ci++ * 0.618034) % 1) < frac;
     for (const b of st.buildings) {
       if (!b) continue;
+      if (b.rubble || b.burning) {
+        if (b.active !== false) this.dirty.city = true;
+        b.active = false;
+        continue;
+      }
       const bdef = CATALOG[b.key];
       if (bdef?.pop && lit()) pop += bdef.pop; // arcologies house people
       if (!b.zone) continue;
@@ -362,12 +496,17 @@ export class Sim {
       trafficCut: Math.min(0.35, trafficCut),
       power: { cap: powerCap, use: powerUse }, water: { cap: waterCap, use: waterUse },
       demand,
+      employment: citizenStats?.employment ?? 1,
+      avgCommute: citizenStats?.avgCommute ?? 0,
+      mood: citizenStats?.mood ?? 65,
     });
     st._popEver = Math.max(st._popEver || 0, pop);
 
     // growth & upgrades
     if (powerCap > 0 && waterCap > 0) this.grow(demand, powerOK && waterOK);
     this.tryUpgrade(happiness);
+    this.tickFire();
+    this.tickContract();
 
     // clock
     st.hour++;
@@ -430,7 +569,9 @@ export class Sim {
 
   tickDay(soukIncome) {
     const st = this.state, s = st.stats;
-    let income = s.pop * 2.2 + s.jobs * 2.8 + s.tourists * 4 + soukIncome;
+    // businesses without reachable staff earn less — road layout matters
+    const staffing = 0.55 + 0.45 * (s.employment ?? 1);
+    let income = s.pop * 2.2 + s.jobs * 2.8 * staffing + s.tourists * 4 + soukIncome;
     let expense = 0;
     const g = st.grid;
     for (let i = 0; i < N * N; i++) {
@@ -456,6 +597,7 @@ export class Sim {
       else if (r < 0.25 && s.tourists > 20) st.event = { type: 'festival', name: '🎆 Shopping Festival', hoursLeft: 12, endText: 'The festival ends. The malls glitter on.' };
       if (st.event) this.emit({ type: 'event', event: st.event });
     }
+    this.offerContract();
   }
 
   checkMilestone() {
@@ -497,34 +639,61 @@ export class Sim {
     }
   }
 
+  // What is blocking this zoned building from leveling up? (actionable hints)
+  levelUpHint(b) {
+    if (!b.zone || b.level >= 3) return null;
+    const i = idx(b.x, b.z);
+    const missing = [];
+    if (!this.coverage.edu[i]) missing.push('a school');
+    if (b.level === 2) {
+      if (!this.coverage.health[i]) missing.push('a clinic');
+      if (!this.coverage.joy[i]) missing.push('leisure (park/souk/mosque)');
+    }
+    if (missing.length) return `⬆️ To grow: needs ${missing.join(' and ')} nearby`;
+    return '⬆️ Ready to grow — keep happiness up!';
+  }
+
   // ---- inspect -----------------------------------------------------------
-  inspect(x, z) {
+  inspect(x, z, citizens) {
     if (!inBounds(x, z)) return null;
     const st = this.state, g = st.grid, i = idx(x, z);
     this.recomputeCoverage();
     const bi = g.bIndex[i];
     if (bi >= 0) {
       const b = st.buildings[bi];
+      if (b.rubble) return { title: 'Burnt Ruins', icon: '🔥', lines: ['Bulldoze to clear — free of charge.'], building: b };
+      if (b.burning) return {
+        title: buildingName(b) + ' — ON FIRE!', icon: '🔥', building: b,
+        lines: [this.coverage.fire[i] ? '🚒 Firefighters are on it!' : '⚠️ No fire station coverage — it will burn down and spread!'],
+      };
       const def = CATALOG[b.key];
       const zs = b.zone ? ZONE_STATS[b.zone][b.level - 1] : null;
-      const names = { [Z.R]: ['Desert Villa', 'Apartment Block', 'Marina Tower'], [Z.C]: ['Corner Shop', 'Department Store', 'Glass Office Tower'], [Z.I]: ['Warehouse', 'Factory', 'Logistics Hub'] };
+      const lines = [
+        b.zone ? `Level ${b.level} / 3` : null,
+        zs?.pop ? `👥 ${zs.pop} residents` : null,
+        zs?.jobs ? `💼 ${zs.jobs} jobs` : null,
+        def?.tourism ? `🧳 +${def.tourism} tourists` : null,
+        b.active === false ? '⚠️ Browned out — no power or water!' : null,
+        this.levelUpHint(b),
+        this.pollution[i] ? '🏭 Polluted air — homes hate this' : null,
+        !this.coverage.fire[i] && (b.zone || def?.cost > 5000) ? '🔥 No fire coverage' : null,
+      ].filter(Boolean);
+      // the people inside
+      const people = [];
+      if (citizens) {
+        const res = citizens.residentsOf(b), wrk = citizens.workersOf(b);
+        const slots = citizens.slotsFor(b);
+        if (slots) lines.push(`👷 Staff: ${wrk.length}/${slots}${wrk.length < slots ? ' — hiring! (workers need a road route here)' : ''}`);
+        for (const c of res.slice(0, 5)) people.push({ id: c.id, face: c.face, name: c.name, doing: citizens.describe(c), hap: c.hap });
+        for (const c of wrk.slice(0, 4)) people.push({ id: c.id, face: c.face, name: c.name, doing: citizens.describe(c), hap: c.hap });
+      }
       return {
-        title: b.zone ? names[b.zone][b.level - 1] : def?.name || '?',
+        title: buildingName(b),
         icon: b.zone ? ['', '🏠', '🏬', '🏭'][b.zone] : def?.icon,
-        lines: [
-          b.zone ? `Level ${b.level} / 3` : null,
-          zs?.pop ? `👥 ${zs.pop} residents` : null,
-          zs?.jobs ? `💼 ${zs.jobs} jobs` : null,
-          def?.tourism ? `🧳 +${def.tourism} tourists` : null,
-          b.active === false ? '⚠️ No power or water!' : null,
-          this.coverage.edu[i] ? '🏫 School nearby' : '🏫 No school coverage',
-          this.coverage.health[i] ? '🏥 Clinic nearby' : '🏥 No clinic coverage',
-          this.coverage.joy[i] ? '😊 Leisure nearby' : null,
-          this.pollution[i] ? '🏭 Polluted air' : null,
-        ].filter(Boolean),
+        lines, people, building: b,
       };
     }
-    if (g.kind[i] === K.ROAD) return { title: 'Road', icon: '🛣️', lines: ['Drag Bulldoze to remove.'] };
+    if (g.kind[i] === K.ROAD) return { title: 'Road', icon: '🛣️', lines: ['Tap a car to meet the driver · 🌡️ heatmap shows congestion'] };
     if (g.metro[i] === M.TRACK) return { title: 'Metro Track', icon: '🚝', lines: ['Add a station here.'] };
     if (g.terrain[i] === T.WATER) return { title: 'The Arabian Gulf', icon: '🌊', lines: ['Warm. Salty. Full of potential islands.'] };
     if (g.zone[i] !== Z.NONE) return { title: 'Zoned Land', icon: '🏗️', lines: ['Waiting for a road, power and water.'] };

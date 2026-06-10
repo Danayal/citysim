@@ -1,10 +1,10 @@
-const CACHE = 'mirage-dubai-v2';
+const CACHE = 'mirage-dubai-v3';
 const SHELL = [
   './', './index.html', './style.css', './manifest.webmanifest',
   './vendor/three.module.js',
   './src/main.js', './src/constants.js', './src/state.js', './src/geom.js',
   './src/terrain.js', './src/buildings.js', './src/roads.js', './src/traffic.js',
-  './src/simulation.js', './src/effects.js', './src/input.js', './src/ui.js',
+  './src/simulation.js', './src/citizens.js', './src/effects.js', './src/input.js', './src/ui.js',
   './icons/icon-180.png', './icons/icon-512.png',
 ];
 

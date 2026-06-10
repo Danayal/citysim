@@ -201,4 +201,5 @@ export class Sounds {
   cash() { this.tone(880, 0.09, 'sine', 0.08); setTimeout(() => this.tone(1320, 0.12, 'sine', 0.08), 70); }
   boom() { this.tone(70, 0.5, 'sine', 0.2, -30); }
   whoosh() { this.tone(300, 0.35, 'sawtooth', 0.04, 500); }
+  alarm() { this.tone(620, 0.16, 'square', 0.07); setTimeout(() => this.tone(460, 0.16, 'square', 0.07), 180); setTimeout(() => this.tone(620, 0.16, 'square', 0.07), 360); }
 }

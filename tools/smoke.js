@@ -72,7 +72,8 @@ sim.place('mosque', 16, 26);
 sim.place('park', 18, 30);
 check('buildings placed', state.buildings.length >= 6);
 
-// 5. run a week of game time
+// 5. run a week of game time (suppress random fires for determinism)
+state.fireCooldown = 1e9;
 for (let h = 0; h < 200; h++) sim.tickHour(0.1, 0);
 check('population grew', state.stats.pop > 50);
 check('jobs appeared', state.stats.jobs > 0);
@@ -152,6 +153,71 @@ check('future buildings persist in save', (() => {
   const l2 = loadGame();
   return l2.buildings.some(b => b.key === 'arcology') && l2.buildings.some(b => b.key === 'fusion');
 })());
+
+// 13. citizens: homes, jobs, commutes
+{
+  const { Citizens } = await import('../src/citizens.js');
+  const st2 = newState();
+  const sim2 = new Sim(st2);
+  st2.money = 1e9;
+  for (let x = N - 1; x >= 14; x--) sim2.place('road', x, HW_Z);
+  for (let z = 16; z <= 32; z++) { sim2.place('road', 20, z); sim2.place('zoneR', 19, z); sim2.place('zoneC', 21, z); }
+  let d2 = null;
+  for (let z = 8; z <= 40 && !d2; z++) for (let x = 2; x <= 16 && !d2; x++) if (sim2.canPlace('desal', x, z).ok) d2 = [x, z];
+  sim2.place('desal', d2[0], d2[1]);
+  sim2.place('solar', 24, 12);
+  for (let h = 0; h < 30; h++) sim2.tickHour(0, 0);
+
+  const cz = new Citizens();
+  let trips = 0;
+  const trafficStub = { spawnTrip: ({ onArrive }) => { trips++; onArrive(); return null; } };
+  st2.hour = 7;
+  cz.tickHour(st2, sim2, trafficStub);
+  check('citizens moved in', cz.list.length > 5);
+  check('citizens found jobs', cz.list.some(c => c.work) && cz.stats.employment > 0.15);
+  st2.hour = 8;
+  cz.tickHour(st2, sim2, trafficStub);
+  st2.hour = 9; cz.tickHour(st2, sim2, trafficStub);
+  st2.hour = 10; cz.tickHour(st2, sim2, trafficStub);
+  check('citizens commuted to work', trips > 0 && cz.list.some(c => c.state === 'work'));
+  const w = cz.list.find(c => c.state === 'work');
+  check('citizen describe works', !!w && cz.describe(w).includes('working as'));
+  const home = cz.list[0].home;
+  check('residentsOf finds people', cz.residentsOf(home).length >= 1);
+
+  // 14. fire: uncovered building burns to rubble, covered one is saved
+  const victim = st2.buildings.find(b => b && b.zone);
+  sim2.ignite(victim);
+  check('building ignites', victim.burning > 0);
+  for (let h = 0; h < 6; h++) sim2.tickHour(0, 0);
+  check('uncovered building burned down', victim.rubble === true);
+  const vi = (victim.z * N + victim.x);
+  check('rubble holds no people', sim2.inspect(victim.x, victim.z, cz).title === 'Burnt Ruins');
+  sim2.coverage.fire.fill(1); // simulate full fire coverage
+  sim2.coverageDirty = false;
+  const victim2 = st2.buildings.find(b => b && b.zone && !b.rubble);
+  sim2.ignite(victim2);
+  for (let h = 0; h < 6; h++) sim2.tickHour(0, 0);
+  check('covered building was saved', victim2.rubble !== true && !victim2.burning);
+  check('rubble bulldoze is free', (() => {
+    const m0 = st2.money;
+    sim2.bulldoze(victim.x, victim.z);
+    return st2.money === m0;
+  })());
+
+  // 15. contracts
+  st2.contractOffer = null; st2.contract = null;
+  st2.day = 5; st2.stats.pop = 500;
+  for (let t = 0; t < 50 && !st2.contractOffer; t++) sim2.offerContract();
+  check('contract offered', !!st2.contractOffer);
+  sim2.acceptContract();
+  check('contract accepted', !!st2.contract && !st2.contractOffer);
+  // force-complete a pop contract
+  st2.contract = { id: 'pop', icon: '🏠', text: 'test', base: 0, target: 10, reward: 999, deadline: st2.day + 3 };
+  const m1 = st2.money;
+  sim2.tickContract();
+  check('contract completes and pays', st2.contract === null && st2.money === m1 + 999);
+}
 
 console.log(failures ? `\n${failures} FAILURES` : '\nALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

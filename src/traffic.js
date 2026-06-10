@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { N, CELL, K, M, MAX_CARS, idx, cellToWorld } from './constants.js';
+import { N, CELL, K, M, Z, MAX_CARS, idx, cellToWorld, CATALOG } from './constants.js';
 import { GeoBuilder } from './geom.js';
-import { findPath, tripEndpoints, highwayConnected, metroComponents } from './roads.js';
+import { findPath, highwayConnected, metroComponents } from './roads.js';
+import { buildingName } from './citizens.js';
 
 const CAR_COLORS = [0xffffff, 0xf2f2f2, 0x222831, 0xc0392b, 0xd4af37, 0x2980b9, 0x8e8e93, 0xe8e0d0];
 
@@ -19,13 +20,14 @@ export class Traffic {
     this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_CARS * 3), 3);
     scene.add(this.mesh);
 
-    this.cars = [];                       // {path, seg, t, speed, color}
+    this.cars = [];                        // {path, seg, t, speed, color, scale, kind, label, citizen, onArrive}
     this.counts = new Float32Array(N * N); // cars per road cell (approx)
-    this.endpoints = [];
+    this.instanceCars = new Array(MAX_CARS).fill(null); // instanceId -> car (for tap)
     this.metroStations = 0;
+    this.modalCut = 0;                     // share of trips diverted to metro/tech
     this.endpointsDirty = true;
-    this.congestion = 0;                  // 0..1 citywide
-    this.ridership = 0;
+    this.congestion = 0;                   // 0..1 citywide
+    this.ambientTimer = 0;
 
     // metro train
     this.trainPath = null;
@@ -54,22 +56,75 @@ export class Traffic {
 
   invalidate() { this.endpointsDirty = true; this.trainDirty = true; }
 
-  targetCars(state) {
-    const cut = Math.min(0.65, this.metroStations * 0.04 + (state.stats.trafficCut || 0));
-    return Math.min(MAX_CARS, Math.floor((state.stats.pop / 11 + state.stats.tourists / 7) * (1 - cut)) + (highwayConnected(state) ? 4 : 0));
-  }
-
   refresh(state) {
     if (!this.endpointsDirty) return;
     this.endpointsDirty = false;
-    this.endpoints = tripEndpoints(state);
-    if (highwayConnected(state)) this.endpoints.push(idx(N - 1, 24));
     const { stationsByComp } = metroComponents(state);
     this.metroStations = stationsByComp.reduce((a, s) => a + (s.length >= 2 ? s.length : 0), 0);
+    this.modalCut = Math.min(0.65, this.metroStations * 0.04 + (state.stats.trafficCut || 0));
     this.rebuildTrainPath(state, stationsByComp);
     this.skyports = state.buildings
       .filter(b => b && b.key === 'skyport')
       .map(b => cellToWorld(b.x, b.z));
+  }
+
+  // Every car is a trip with a purpose. Returns the car (or null if the
+  // traveller took the metro / hyperloop / a drone instead).
+  spawnTrip({ path, kind, label, citizen, onArrive, color, scale }) {
+    if (!path || path.length < 2 || this.cars.length >= MAX_CARS ||
+        (kind === 'citizen' && Math.random() < this.modalCut)) {
+      onArrive?.();
+      return null;
+    }
+    const car = {
+      path, seg: 0, t: 0,
+      speed: 2.6 + Math.random() * 1.2,
+      color: color ?? CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0],
+      scale: scale || 1, kind, label, citizen: citizen || null, onArrive,
+    };
+    this.cars.push(car);
+    this.counts[path[0]]++;
+    return car;
+  }
+
+  carWorldPos(car) {
+    const cur = car.path[car.seg], nxt = car.path[Math.min(car.seg + 1, car.path.length - 1)];
+    const [ax, az] = cellToWorld(cur % N, (cur / N) | 0);
+    const [bx, bz] = cellToWorld(nxt % N, (nxt / N) | 0);
+    return [ax + (bx - ax) * car.t, az + (bz - az) * car.t];
+  }
+
+  // Ambient economy traffic: factory deliveries and tourist arrivals.
+  ambient(state) {
+    const kind = state.grid.kind;
+    const roadOf = (b) => {
+      for (let dz = -1; dz <= (b.d || 1); dz++) for (let dx = -1; dx <= (b.w || 1); dx++) {
+        const x = b.x + dx, z = b.z + dz;
+        if (x >= 0 && z >= 0 && x < N && z < N && kind[idx(x, z)] === K.ROAD) return [x, z];
+      }
+      return null;
+    };
+    const go = (fromB, toB, fromCell, toCell, kind2, label, scale, color) => {
+      const a = fromCell || (fromB && roadOf(fromB)), b = toCell || (toB && roadOf(toB));
+      if (!a || !b) return;
+      const path = findPath(state.grid.kind, a[0], a[1], b[0], b[1]);
+      if (path) this.spawnTrip({ path, kind: kind2, label, scale, color });
+    };
+    const hw = highwayConnected(state) ? [N - 1, 24] : null;
+    const factories = state.buildings.filter(b => b && b.zone === Z.I && b.active !== false && !b.burning);
+    const shops = state.buildings.filter(b => b && b.zone === Z.C && b.active !== false && !b.burning);
+    const sights = state.buildings.filter(b => b && (CATALOG[b.key]?.tourism || (b.zone === Z.C && b.level >= 2)));
+    if (factories.length && Math.random() < 0.55) {
+      const f = factories[(Math.random() * factories.length) | 0];
+      const dest = shops.length && Math.random() < 0.7 ? shops[(Math.random() * shops.length) | 0] : null;
+      go(f, dest, null, dest ? null : hw, 'freight',
+        `📦 Freight from ${buildingName(f)} ${dest ? 'to ' + buildingName(dest) : 'to the highway'}`,
+        1.35, 0xd8d2c4);
+    }
+    if (hw && sights.length && Math.random() < Math.min(0.8, state.stats.tourists / 120 + 0.1)) {
+      const s = sights[(Math.random() * sights.length) | 0];
+      go(null, s, hw, null, 'tourist', `🧳 Tourists visiting ${buildingName(s)}`, 1, 0xffffff);
+    }
   }
 
   rebuildTrainPath(state, stationsByComp) {
@@ -88,29 +143,9 @@ export class Traffic {
     this.train.count = this.trainPath ? 3 : 0;
   }
 
-  spawn(state) {
-    if (this.endpoints.length < 2) return;
-    const a = this.endpoints[(Math.random() * this.endpoints.length) | 0];
-    const b = this.endpoints[(Math.random() * this.endpoints.length) | 0];
-    if (a === b) return;
-    const path = findPath(state.grid.kind, a % N, (a / N) | 0, b % N, (b / N) | 0);
-    if (!path || path.length < 3) return;
-    this.cars.push({
-      path, seg: 0, t: Math.random() * 0.5,
-      speed: 2.6 + Math.random() * 1.2,
-      color: CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0],
-    });
-    this.counts[path[0]]++;
-  }
-
   update(dt, state) {
     this.refresh(state);
-    const want = this.targetCars(state);
-    if (this.cars.length < want && Math.random() < 0.3) this.spawn(state);
-    while (this.cars.length > want + 10) {
-      const c = this.cars.pop();
-      this.counts[c.path[c.seg]]--;
-    }
+    if ((this.ambientTimer += dt) > 0.9) { this.ambientTimer = 0; this.ambient(state); }
 
     let jam = 0, onRoad = 0;
     const kind = state.grid.kind;
@@ -118,21 +153,26 @@ export class Traffic {
       const c = this.cars[ci];
       const cell = c.path[c.seg];
       if (kind[cell] !== K.ROAD || (c.seg + 1 < c.path.length && kind[c.path[c.seg + 1]] !== K.ROAD)) {
-        // road bulldozed under us — vanish
+        // road bulldozed under us — deliver the passenger anyway, drop the car
         this.counts[cell] = Math.max(0, this.counts[cell] - 1);
         this.cars.splice(ci, 1);
+        c.onArrive?.();
         continue;
       }
       const load = this.counts[cell];
       const slow = 1 / (1 + 0.4 * Math.max(0, load - 2));
       if (load > 3) jam++;
       onRoad++;
-      c.t += (c.speed * slow * dt) / 1; // t in cells
+      c.t += c.speed * slow * dt; // t in cells
       while (c.t >= 1) {
         c.t -= 1;
-        this.counts[cell] = Math.max(0, this.counts[cell] - 1);
+        this.counts[c.path[c.seg]] = Math.max(0, this.counts[c.path[c.seg]] - 1);
         c.seg++;
-        if (c.seg >= c.path.length - 1) { this.cars.splice(ci, 1); c.dead = true; break; }
+        if (c.seg >= c.path.length - 1) {
+          this.cars.splice(ci, 1);
+          c.onArrive?.();
+          break;
+        }
         this.counts[c.path[c.seg]]++;
       }
     }
@@ -152,9 +192,11 @@ export class Traffic {
       const ox = (-dz / len) * 0.85, oz = (dx / len) * 0.85;
       d.position.set(ax + dx * c.t + ox, 0.22, az + dz * c.t + oz);
       d.rotation.set(0, Math.atan2(dx, dz) + Math.PI / 2, 0);
+      d.scale.setScalar(c.scale || 1);
       d.updateMatrix();
       this.mesh.setMatrixAt(n, d.matrix);
       this.mesh.setColorAt(n, new THREE.Color(c.color));
+      this.instanceCars[n] = c;
       n++;
     }
     this.mesh.count = n;

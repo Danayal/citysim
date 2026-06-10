@@ -41,6 +41,7 @@ export class UI {
         <span class="demand">R<b id="dr"></b>C<b id="dc"></b>I<b id="di"></b></span>
         <span id="traffic">🚗 0%</span>
         <span id="tourists">🧳 0</span>
+        <span id="contract" class="hidden"></span>
         <span class="spacer"></span>
         <button id="speed0" class="spd">⏸</button>
         <button id="speed1" class="spd on">▶</button>
@@ -53,6 +54,14 @@ export class UI {
       this.sounds.tap(); this.cb.onSpeed(i); this.refreshSpeed(i);
     }));
     $('#btn-undo').addEventListener('click', () => this.cb.onUndo());
+    $('#contract').addEventListener('click', () => this.togglePanel('goals'));
+
+    // follow-cam banner
+    const fb = el('div', 'hidden', '');
+    fb.id = 'followbar';
+    fb.innerHTML = '<span id="followtext"></span><button id="followstop">✕</button>';
+    document.body.appendChild(fb);
+    $('#followstop').addEventListener('click', () => this.cb.onStopFollow());
     $('#btn-goals').addEventListener('click', () => { this.sounds.tap(); this.togglePanel('goals'); });
     $('#btn-menu').addEventListener('click', () => { this.sounds.tap(); this.togglePanel('menu'); });
   }
@@ -169,12 +178,22 @@ export class UI {
 
   renderGoals() {
     const p = $('#p-goals');
+    const c = this.state.contract;
+    let contractHtml = '';
+    if (c) {
+      const prog = Math.max(0, Math.min(1, this.sim ? this.sim.contractProgress() : 0));
+      const daysLeft = Math.max(0, c.deadline - this.state.day);
+      contractHtml = `<h3>📜 Sheikh's Contract</h3>
+        <div class="goal">${c.icon} ${c.text} <span class="gold">+${fmt(c.reward)}</span></div>
+        <div class="bar"><i style="width:${Math.round(prog * 100)}%"></i></div>
+        <div class="goal">⏳ ${daysLeft} day${daysLeft === 1 ? '' : 's'} left · ${Math.round(prog * 100)}% done</div>`;
+    }
     const rows = GOALS.map(g => {
       const done = this.state.goals[g.id];
       return `<div class="goal ${done ? 'done' : ''}">${done ? '✅' : '⬜'} ${g.text} <span class="gold">+${g.reward}</span></div>`;
     }).join('');
     const m = MILESTONES[this.state.milestone];
-    p.innerHTML = `<h3>🎯 Goals</h3>${rows}
+    p.innerHTML = `${contractHtml}<h3>🎯 Goals</h3>${rows}
       <h3>🏆 Next milestone</h3>
       <div class="goal">${m ? `${m.pop} residents → <b>${m.title}</b> <span class="gold">+${m.reward}</span>` : 'All milestones achieved — your skyline is legend.'}</div>
       <button onclick="this.parentElement.classList.add('hidden')">Close</button>`;
@@ -185,11 +204,46 @@ export class UI {
     if (!info) { p.classList.add('hidden'); return; }
     $('#p-goals').classList.add('hidden');
     $('#p-menu').classList.add('hidden');
-    p.innerHTML = `<h3>${info.icon || ''} ${info.title}</h3>` +
-      info.lines.map(l => `<div class="goal">${l}</div>`).join('') +
-      `<button onclick="this.parentElement.classList.add('hidden')">Close</button>`;
+    let html = `<h3>${info.icon || ''} ${info.title}</h3>` +
+      info.lines.map(l => `<div class="goal">${l}</div>`).join('');
+    if (info.people?.length) {
+      html += `<h3>👥 People here</h3>` + info.people.map(c =>
+        `<div class="person"><span>${c.face} <b>${c.name}</b> ${moodFace(c.hap)}<br><i>${c.doing}</i></span>` +
+        `<button class="follow" data-cid="${c.id}">👁 Follow</button></div>`).join('');
+    }
+    html += `<button onclick="this.parentElement.classList.add('hidden')">Close</button>`;
+    p.innerHTML = html;
+    p.querySelectorAll('.follow').forEach(b =>
+      b.addEventListener('click', () => { this.sounds.tap(); p.classList.add('hidden'); this.cb.onFollow(+b.dataset.cid); }));
     p.classList.remove('hidden');
   }
+
+  showCarInfo(car, citizens) {
+    const p = $('#p-inspect');
+    let html;
+    if (car.citizen) {
+      const c = car.citizen;
+      html = `<h3>🚗 ${c.face} ${c.name}</h3>
+        <div class="goal">${citizens.describe(c)}</div>
+        <div class="goal">Route: ${car.path.length} blocks · mood ${moodFace(c.hap)} ${c.hap}%</div>
+        <div class="person"><span>Tag along for the ride?</span><button class="follow" data-cid="${c.id}">👁 Follow</button></div>`;
+    } else {
+      html = `<h3>${car.kind === 'freight' ? '🚚 Delivery Truck' : '🚕 Tourist Taxi'}</h3>
+        <div class="goal">${car.label || 'On the move.'}</div>
+        <div class="goal">Route: ${car.path.length} blocks</div>`;
+    }
+    html += `<button onclick="this.parentElement.classList.add('hidden')">Close</button>`;
+    p.innerHTML = html;
+    p.querySelectorAll('.follow').forEach(b =>
+      b.addEventListener('click', () => { this.sounds.tap(); p.classList.add('hidden'); this.cb.onFollow(+b.dataset.cid); }));
+    p.classList.remove('hidden');
+  }
+
+  showFollow(text) {
+    $('#followbar').classList.remove('hidden');
+    $('#followtext').textContent = text;
+  }
+  hideFollow() { $('#followbar').classList.add('hidden'); }
 
   // ---- HUD refresh -----------------------------------------------------------
   updateHUD() {
@@ -214,6 +268,12 @@ export class UI {
     const badge = $('#eventbadge');
     badge.classList.toggle('hidden', !ev);
     if (ev) badge.textContent = ev.name;
+    const cc = $('#contract');
+    cc.classList.toggle('hidden', !st.contract);
+    if (st.contract) {
+      const prog = Math.max(0, Math.min(1, this.sim ? this.sim.contractProgress() : 0));
+      cc.textContent = `📜 ${Math.round(prog * 100)}%`;
+    }
     // unlock refresh on landmark tab
     if (this.category === 'landmarks') {
       document.querySelectorAll('.item.locked').forEach(b => {
@@ -236,6 +296,23 @@ export class UI {
         case 'levelup': this.sounds.tone(520, 0.12, 'triangle', 0.07, 180); break;
         case 'wonder': this.toast('🌟 A Wonder rises! Tourists incoming.', 3600); this.sounds.cash(); break;
         case 'fireworks': effects.launchFireworks(); this.sounds.boom(); break;
+        case 'fire':
+          this.toastAction(`🔥 ${e.spread ? 'The fire is spreading to' : 'Fire at'} ${e.name}! <b>Tap to view</b>`,
+            () => this.cb.onViewFire(e.x, e.z), 5000);
+          this.sounds.alarm();
+          break;
+        case 'contract-offer':
+          this.modalChoice(`📜 A Contract from the Sheikh`,
+            `${e.offer.icon} <b>${e.offer.text}</b><br>within ${e.offer.days} days<br><br>Reward: <b class="gold">${fmt(e.offer.reward)}</b>`,
+            '🤝 Accept', 'Not now',
+            () => { this.cb.onContractAccept(); this.toast('📜 Contract accepted. The clock is ticking!'); },
+            () => this.cb.onContractDecline());
+          this.sounds.whoosh();
+          break;
+        case 'contract-done':
+          this.modal('📜 Contract Complete!', `${e.text}<br><br><b class="gold">Reward: ${fmt(e.reward)}</b><br>The Sheikh is pleased.`);
+          this.sounds.cash();
+          break;
         case 'milestone':
           this.modal(`🏆 ${e.title}`, `${e.blurb}<br><br><b class="gold">Reward: ${fmt(e.reward)}</b>`);
           effects.launchFireworks();
@@ -248,9 +325,16 @@ export class UI {
   toast(html, ms = 2600) {
     const t = $('#toast');
     t.innerHTML = html;
+    t.onclick = null;
     t.classList.remove('hidden');
     clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
+  }
+
+  toastAction(html, onClick, ms = 4000) {
+    this.toast(html, ms);
+    const t = $('#toast');
+    t.onclick = () => { t.classList.add('hidden'); t.onclick = null; onClick(); };
   }
 
   modal(title, html) {
@@ -259,7 +343,18 @@ export class UI {
     m.classList.remove('hidden');
     $('#modal-ok').addEventListener('click', () => m.classList.add('hidden'));
   }
+
+  modalChoice(title, html, yes, no, onYes, onNo) {
+    const m = $('#modal');
+    m.innerHTML = `<div class="modal-card"><h2>${title}</h2><p>${html}</p>
+      <button id="modal-yes">${yes}</button><button id="modal-no" class="ghost">${no}</button></div>`;
+    m.classList.remove('hidden');
+    $('#modal-yes').addEventListener('click', () => { m.classList.add('hidden'); onYes?.(); });
+    $('#modal-no').addEventListener('click', () => { m.classList.add('hidden'); onNo?.(); });
+  }
 }
+
+function moodFace(h) { return h >= 70 ? '😊' : h >= 45 ? '😐' : '😠'; }
 
 function setBar(sel, use, cap) {
   const i = $(sel);

@@ -36,6 +36,10 @@ export function newState() {
     milestone: 0,             // next milestone index
     goals: {},                // id -> true when done
     palmBuilt: false,
+    contract: null,           // active Sheikh's contract
+    contractOffer: null,
+    contractsDone: 0,
+    fireCooldown: 0,
     event: null,              // {type, hoursLeft, name}
     muted: false,
     cameraHint: true,
@@ -80,6 +84,7 @@ export function serialize(state) {
     buildings: state.buildings.filter(b => b),
     milestone: state.milestone, goals: state.goals, palmBuilt: state.palmBuilt,
     muted: state.muted, stats: state.stats, popEver: state._popEver || 0,
+    contract: state.contract, contractsDone: state.contractsDone || 0,
   });
 }
 
@@ -99,6 +104,7 @@ export function loadGame() {
       cityName: d.cityName, money: d.money, day: d.day, hour: d.hour,
       speed: d.speed || 1, milestone: d.milestone || 0, goals: d.goals || {},
       palmBuilt: !!d.palmBuilt, muted: !!d.muted, _popEver: d.popEver || 0,
+      contract: d.contract || null, contractsDone: d.contractsDone || 0,
     });
     if (d.stats) Object.assign(state.stats, d.stats);
     state.grid.terrain.set(b64ToU8(d.terrain));

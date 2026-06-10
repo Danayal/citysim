@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CELL, WORLD, CATALOG, cellToWorld } from './constants.js';
+import { CELL, WORLD, CATALOG, cellToWorld, idx, K } from './constants.js';
 import { newState, loadGame, saveGame, wipeSave } from './state.js';
 import { GeoBuilder, swapGeometry } from './geom.js';
 import { Terrain } from './terrain.js';
@@ -7,6 +7,7 @@ import { CityMeshes } from './buildings.js';
 import { Roads } from './roads.js';
 import { Traffic } from './traffic.js';
 import { Sim } from './simulation.js';
+import { Citizens } from './citizens.js';
 import { Effects, Sounds } from './effects.js';
 import { Input } from './input.js';
 import { UI } from './ui.js';
@@ -32,6 +33,8 @@ resize();
 
 let state = loadGame() || newState();
 let sim = new Sim(state);
+const citizens = new Citizens();
+let following = null; // citizen being shadowed by the camera
 
 const terrain = new Terrain(scene);
 const city = new CityMeshes(scene);
@@ -79,8 +82,14 @@ function undo() {
   sim.coverageDirty = true;
   Object.assign(sim.dirty, { terrain: true, city: true, roads: true, metro: true, zones: true, palms: true });
   traffic.invalidate();
+  citizens.invalidate();
+  stopFollow();
   sounds.tap();
   ui.toast('↩️ Undone', 1000);
+}
+
+function stopFollow() {
+  if (following) { following = null; ui.hideFollow(); }
 }
 
 let uiRef = null;
@@ -94,9 +103,13 @@ const ui = new UI(state, sounds, {
     state = newState();
     sim = new Sim(state);
     ui.state = state;
+    ui.sim = sim;
     traffic.cars.length = 0;
     traffic.counts.fill(0);
     traffic.invalidate();
+    citizens.list.length = 0;
+    citizens.invalidate();
+    stopFollow();
     Object.assign(sim.dirty, { terrain: true, city: true, roads: true, metro: true, zones: true, palms: true });
     ui.togglePanel(null);
     ui.toast('🏜️ Fresh sand. Build something legendary.');
@@ -106,22 +119,55 @@ const ui = new UI(state, sounds, {
     roads.heat.visible = heatmapOn;
     ui.toast(heatmapOn ? '🌡️ Traffic heatmap ON' : 'Traffic heatmap off', 1500);
   },
+  onFollow(cid) {
+    const c = citizens.list.find(x => x.id === cid);
+    if (!c) { ui.toast('They seem to have moved away…', 1800); return; }
+    following = c;
+    ui.setTool('pan');
+    input.moved = false;
+  },
+  onStopFollow() { stopFollow(); },
+  onViewFire(x, z) { input.flyTo(x, z); input.dist = Math.min(input.dist, 70); input.apply(); },
+  onContractAccept() { sim.acceptContract(); ui.updateHUD(); },
+  onContractDecline() { sim.declineContract(); },
 });
+ui.sim = sim;
 
 uiRef = ui;
 ui.refreshSpeed(state.speed);
 
 const input = new Input(canvas, camera, {
   getTool: () => ui.tool,
-  onTap(cell, point) {
+  onTap(cell, point, e) {
     sounds.ensure();
-    if (!cell) return;
     const tool = ui.tool;
     if (tool === 'pan' || tool === 'inspect') {
-      ui.showInspect(sim.inspect(cell[0], cell[1]));
+      // tap a vehicle first — meet the driver
+      const inst = input.pickInstance(e, traffic.mesh);
+      let car = inst >= 0 ? traffic.instanceCars[inst] : null;
+      const onRoad = cell && state.grid.kind[idx(cell[0], cell[1])] === K.ROAD;
+      if (!car && point && onRoad) {
+        // fat-finger fallback: nearest car to the tapped ground point
+        let bd = 3.2;
+        for (let i = 0; i < traffic.mesh.count; i++) {
+          const c2 = traffic.instanceCars[i];
+          if (!c2) continue;
+          const [cx, cz] = traffic.carWorldPos(c2);
+          const d = Math.hypot(cx - point.x, cz - point.z);
+          if (d < bd) { bd = d; car = c2; }
+        }
+      }
+      if (car) {
+        ui.showCarInfo(car, citizens);
+        sounds.tap();
+        return;
+      }
+      if (!cell) return;
+      ui.showInspect(sim.inspect(cell[0], cell[1], citizens));
       sounds.tap();
       return;
     }
+    if (!cell) return;
     if (tool === 'heatmap') return;
     placeWithFootprint(tool, cell[0], cell[1]);
   },
@@ -245,7 +291,7 @@ function updateGhost(cell) {
 function processDirty() {
   const d = sim.dirty;
   if (d.terrain) { terrain.rebuild(state); d.terrain = false; d.palms = true; }
-  if (d.city) { city.rebuild(state); d.city = false; traffic.invalidate(); }
+  if (d.city) { city.rebuild(state); d.city = false; traffic.invalidate(); citizens.invalidate(); }
   if (d.roads) { roads.rebuild(state); d.roads = false; traffic.invalidate(); }
   if (d.metro) { roads.rebuildMetro(state); d.metro = false; traffic.invalidate(); }
   if (d.zones) { city.rebuildZones(state); d.zones = false; }
@@ -269,7 +315,8 @@ function frame(now) {
   hourAcc += dt * HOURS_PER_SEC[state.speed];
   while (hourAcc >= 1) {
     hourAcc -= 1;
-    sim.tickHour(traffic.congestion, traffic.metroStations || 0);
+    citizens.tickHour(state, sim, traffic);
+    sim.tickHour(traffic.congestion, traffic.metroStations || 0, citizens.stats);
   }
 
   processDirty();
@@ -277,6 +324,27 @@ function frame(now) {
 
   if (state.speed > 0) traffic.update(dt * (state.speed === 2 ? 1.6 : 1), state);
   terrain.update(dt, time, state);
+  input.update(dt);
+  city.animateFire(time);
+
+  // follow-cam: shadow a citizen through their day
+  if (following) {
+    if (input.moved) stopFollow();
+    else if (!citizens.list.includes(following)) stopFollow();
+    else {
+      let px, pz;
+      if (following.car) [px, pz] = traffic.carWorldPos(following.car);
+      else {
+        const b = citizens.whereIs(following);
+        [px, pz] = cellToWorld(b.x + ((b.w || 1) - 1) / 2, b.z + ((b.d || 1) - 1) / 2);
+      }
+      input.target.x += (px - input.target.x) * Math.min(1, dt * 4);
+      input.target.z += (pz - input.target.z) * Math.min(1, dt * 4);
+      input.apply();
+      ui.showFollow(`${following.face} ${following.name} — ${citizens.describe(following)}`);
+    }
+  }
+  input.moved = false;
 
   const hour = state.hour + hourAcc; // smooth fraction for lighting
   const night = effects.update(dt, hour % 24, state.event?.type === 'sandstorm');
@@ -325,7 +393,9 @@ if (!Object.keys(state.goals).length && state.buildings.length === 0) {
      1️⃣ Draw a <b>Road</b> from the glowing highway ramp (east edge).<br>
      2️⃣ Paint <b>Homes</b> zones beside it.<br>
      3️⃣ Add <b>Solar power</b> and a <b>Desalination plant</b>.<br><br>
-     Then watch your mirage become a metropolis. 🌆`);
+     Real citizens will move in, take jobs and drive to work —
+     <b>tap any car or home to meet them</b>.<br><br>
+     📜 The Sheikh will send contracts. 🔥 Keep a fire station handy.`);
 }
 
 // PWA service worker
@@ -337,7 +407,12 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 window.__game = {
   get state() { return state; },
   get sim() { return sim; },
-  ui, input, traffic, effects,
-  tickHours(n) { for (let i = 0; i < n; i++) sim.tickHour(traffic.congestion, traffic.metroStations || 0); },
+  ui, input, traffic, effects, citizens,
+  tickHours(n) {
+    for (let i = 0; i < n; i++) {
+      citizens.tickHour(state, sim, traffic);
+      sim.tickHour(traffic.congestion, traffic.metroStations || 0, citizens.stats);
+    }
+  },
 };
 

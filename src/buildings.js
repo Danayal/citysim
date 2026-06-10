@@ -315,10 +315,18 @@ const DRAW = {
     }
     g.box(0.3, 0.3, 0.3, 0, 51, 0, 0xffffff); // spire beacon
   },
+
+  rubble(s, g) {
+    s.box(2.8, 0.7, 2.6, 0, 0, 0, 0x3a3530);
+    s.box(1.4, 1.1, 1.2, -0.5, 0.3, 0.4, 0x4a443c, { y: 0.5 });
+    s.box(1.0, 0.8, 1.4, 0.8, 0.2, -0.5, 0x2e2a26, { y: 1.1 });
+    s.cyl(0.5, 0.1, 1.6, 0.3, 0.7, 0.6, 0x55504a, 5);
+  },
 };
 
 // Map building record -> draw key
 function drawKey(b) {
+  if (b.rubble) return 'rubble';
   if (b.zone === Z.R) return 'r' + b.level;
   if (b.zone === Z.C) return 'c' + b.level;
   if (b.zone === Z.I) return 'i' + b.level;
@@ -352,23 +360,37 @@ export class CityMeshes {
     this.zoneMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false });
     this.zoneMesh = new THREE.Mesh(new THREE.BufferGeometry(), this.zoneMat);
     scene.add(this.zoneMesh);
+
+    // flames on burning buildings (pulsed from the main loop)
+    this.fireMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false });
+    this.fireMesh = new THREE.Mesh(new THREE.BufferGeometry(), this.fireMat);
+    scene.add(this.fireMesh);
   }
 
   rebuild(state) {
-    const s = new GeoBuilder(), g = new GeoBuilder();
+    const s = new GeoBuilder(), g = new GeoBuilder(), f = new GeoBuilder();
     for (const b of state.buildings) {
       if (!b) continue;
       const t = getTemplate(drawKey(b));
       const wx = (b.x + (b.w || 1) / 2) * CELL - WORLD / 2;
       const wz = (b.z + (b.d || 1) / 2) * CELL - WORLD / 2;
       s.paste(t.solid, wx, 0, wz);
-      if (b.active !== false) g.paste(t.glow, wx, 0, wz);
-      if (b.active === false) { // dark "abandoned" tint marker
+      if (b.active !== false && !b.burning) g.paste(t.glow, wx, 0, wz);
+      if (b.active === false && !b.rubble) { // dark "browned out" tint marker
         s.box((b.w || 1) * CELL * 0.9, 0.15, (b.d || 1) * CELL * 0.9, wx, 0.01, wz, 0x55504a);
+      }
+      if (b.burning) {
+        const w = (b.w || 1) * CELL;
+        f.add(new THREE.ConeGeometry(w * 0.32, 5.5, 7), 0xff7722, mat4(wx, 3.2, wz));
+        f.add(new THREE.ConeGeometry(w * 0.2, 4.0, 6), 0xffd040, mat4(wx + 0.8, 2.6, wz - 0.6));
+        f.add(new THREE.ConeGeometry(w * 0.18, 3.4, 6), 0xff4422, mat4(wx - 0.9, 2.4, wz + 0.7));
+        f.add(new THREE.SphereGeometry(w * 0.3, 7, 5), 0x444444, mat4(wx + 0.4, 7.5, wz)); // smoke puff
       }
     }
     swapGeometry(this.solid, s.build());
     swapGeometry(this.glow, g.build());
+    swapGeometry(this.fireMesh, f.build());
+    this.hasFire = !f.empty();
   }
 
   // translucent colored tiles on zoned-but-empty cells
@@ -391,4 +413,13 @@ export class CityMeshes {
     this.glow.visible = n > 0.05;
     this.glowMat.opacity = n;
   }
+
+  animateFire(time) {
+    if (!this.hasFire) { this.fireMesh.visible = false; return; }
+    this.fireMesh.visible = true;
+    this.fireMat.opacity = 0.75 + 0.25 * Math.sin(time * 13) * Math.sin(time * 7.3);
+    this.fireMesh.scale.y = 1 + 0.12 * Math.sin(time * 9);
+  }
 }
+
+const mat4 = (x, y, z) => new THREE.Matrix4().setPosition(x, y, z);
